@@ -21,7 +21,7 @@
 ---
 
 ## config.json（サンプル）
-
+```json
 {
   "editor_path": "C:\\Program Files\\CELSYS\\CLIP STUDIO 1.5\\CLIP STUDIO PAINT\\CLIPStudioPaint.exe",
   "export_dir": "D:\\SD\\PaintExports",
@@ -31,6 +31,7 @@
   "export_naming": "{datetime}_{tab}_{index}_{counter}",
   "export_cleanup_days": 0
 }
+```
 
 ### 必須編集ポイント
 - editor_path: 自分の環境の CLIP STUDIO（または他のペイントツール）の実行ファイルに変更する  
