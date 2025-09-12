@@ -6,11 +6,9 @@
 
 ## ユーザーがやること（最短手順）
 
-1. 拡張を配置  
-   stable-diffusion-webui-forge/extensions/paint-tool/scripts/extension.py
-
-2. 設定ファイルを用意  
-   stable-diffusion-webui-forge/extensions/paint-tool/config.json を作成（下記サンプルをコピペして編集）
+1. 拡張をインストール
+   webuiの[Extensions]>[Install from URL]のURL for extension's git repositoryに以下を入力して、[Install]ボタンを押す。
+   `https://github.com/CircleD5/sd-open-paint-tool.git`
 
 3. Forge を再起動
 
