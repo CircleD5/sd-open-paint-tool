@@ -9,8 +9,8 @@
 # - File naming: <YYYYMMDD_HHMMSS>_<index>_<counter>_painted.<ext>
 #   (tab name is NOT included in the filename)
 # - If the gallery item has no path (PIL in-memory), writes it there first
-# - Editor path is read from config.json; if invalid/missing, falls back to
-#   Windows Paint (C:\Windows\System32\mspaint.exe) or OS default opener
+# - Editor path is read from config.json; if missing/invalid, logs a message
+#   asking to set it, then falls back to OS default opener
 # -------------------------------------------------------------------
 
 from __future__ import annotations
@@ -34,9 +34,6 @@ from modules.ui_components import ToolButton
 
 EXT_NAME       = "paint-tool"
 ICON_PAINT     = "🖌️"
-
-# Program default: Windows built-in Paint
-DEFAULT_EDITOR = r"mspaint"
 
 EXT_ROOT   = os.path.dirname(os.path.dirname(__file__))             # .../extensions/paint-tool
 CFG_PATH   = os.path.join(EXT_ROOT, "config.json")
@@ -63,13 +60,17 @@ def sanitize_filename(name: str) -> str:
         name = name.replace(ch, "_")
     return name
 
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
 # =========================
 # Config management
 # =========================
-# NOTE: cleanup や export_dir は廃止しています
+# NOTE: no cleanup/export_dir settings
 
 _DEFAULT_CONFIG = {
-    "editor_path": r"C:\Program Files\CELSYS\CLIP STUDIO 1.5\CLIP STUDIO PAINT\CLIPStudioPaint.exe",  # sample; program default uses mspaint.exe
+    # sample value only; if not valid on the system, we log and use OS default opener
+    "editor_path": r"",
     "export_format": "PNG",           # "PNG" or "JPG"
     "export_jpeg_quality": 95         # 1-100
 }
@@ -100,9 +101,6 @@ def load_config() -> Dict[str, Any]:
     except Exception as e:
         log(f"config load warning: {e}")
     return cfg
-
-def ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
 
 # =========================
 # Per-tab outdir resolver
@@ -158,7 +156,7 @@ class Exporter:
 
     def next_base_name(self, index: int) -> str:
         """
-        Filename base without tab (requested), and must include _painted.
+        Filename base without tab; must include _painted.
         Pattern: <YYYYMMDD_HHMMSS>_<index>_<counter>_painted
         """
         self.counter += 1
@@ -188,7 +186,6 @@ class Exporter:
         # keep original extension, add _painted suffix
         root, ext = os.path.splitext(strip_query(src_path))
         if not ext:
-            # if original has no extension, fall back to export format
             ext = self.ext_for_export()
         name = self.next_base_name(index) + ext
         dest = os.path.join(outdir, name)
@@ -270,18 +267,16 @@ class PaintTool:
                     log(f"Launch editor: {editor} {path}")
                     subprocess.Popen([editor, path])
                 else:
-                    # editor invalid → OS default opener
-                    log(f"editor_path 無効/未設定。既定アプリで開きます: {path}")
+                    log("editor_path が未設定/無効です。extensions/paint-tool/config.json の editor_path を設定してください。OS既定アプリで開きます。")
+                    # OS default opener
                     if os.name == "nt":
                         os.startfile(path)  # type: ignore[attr-defined]
                     elif os.name == "posix":
-                        # macOS / Linux
                         try:
                             subprocess.Popen(["open", path])  # macOS
                         except Exception:
                             subprocess.Popen(["xdg-open", path])  # Linux
                     else:
-                        # last resort
                         subprocess.Popen([path])
             except Exception as e:
                 log(f"外部起動エラー: {e}")
