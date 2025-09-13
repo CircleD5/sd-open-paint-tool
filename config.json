@@ -1,8 +1,5 @@
 {
   "editor_path": "C:\\Program Files\\CELSYS\\CLIP STUDIO 1.5\\CLIP STUDIO PAINT\\CLIPStudioPaint.exe",
-  "always_export_copy": true,
   "export_format": "PNG",
-  "export_jpeg_quality": 95,
-  "export_naming": "{datetime}_{tab}_{index}_{counter}",
-  "export_cleanup_days": 0
+  "export_jpeg_quality": 95
 }
