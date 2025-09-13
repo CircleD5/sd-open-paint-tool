@@ -4,7 +4,7 @@
 
 ---
 
-## ユーザーがやること（最短手順）
+## ユーザーがやること
 
 1. 拡張をインストール  
    webui の [Extensions] > [Install from URL] の URL に以下を入力して [Install]  
@@ -15,12 +15,13 @@
 ---
 
 ## config.json（サンプル）
+```
 {
   "editor_path": "C:\\Program Files\\CELSYS\\CLIP STUDIO 1.5\\CLIP STUDIO PAINT\\CLIPStudioPaint.exe",
   "export_format": "PNG",
   "export_jpeg_quality": 95
 }
-
+```
 ### 必須編集ポイント
 - editor_path: 自分の環境の CLIP STUDIO（または他のエディタ）に変更可能  
   例: C:\\Program Files\\CELSYS\\CLIP STUDIO 2.0\\CLIP STUDIO PAINT\\CLIPStudioPaint.exe
