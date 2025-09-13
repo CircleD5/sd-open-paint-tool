@@ -291,7 +291,6 @@ class PaintTool:
                 outputs=[],
                 show_progress=False,
             )
-        log(f"injected PaintTool button into {ROW_ID_PREFIX}{tab}")
 
     def on_after_component(self, component: Any, **kwargs) -> None:
         elem_id = (kwargs.get("elem_id") or "").strip()
@@ -301,7 +300,6 @@ class PaintTool:
             tab = elem_id[:-len(GALLERY_ID_SUFFIX)]
             if tab:
                 self.galleries[tab] = component
-                log(f"captured gallery: tab={tab}, elem_id={elem_id}")
                 pending_row = self.pending_rows.pop(tab, None)
                 if pending_row is not None:
                     self.inject_button_into_row(tab, pending_row)
