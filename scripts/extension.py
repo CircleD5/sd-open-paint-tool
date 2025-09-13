@@ -5,6 +5,8 @@
 # - Opens the selected image (or first if none) in an external editor
 # - If the gallery item has no path (PIL in-memory), exports to a user-
 #   configurable persistent directory (export_dir) before opening
+# - When export_dir is empty or missing, falls back to Forge/A1111 output
+#   directory (outdir_{tab}_samples or outdir_samples)
 # - Editor and export settings are configurable via config.json
 # -------------------------------------------------------------------
 
@@ -17,7 +19,7 @@ import shutil
 import tempfile
 import subprocess
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 import gradio as gr
 from PIL import Image
@@ -108,10 +110,10 @@ def load_config() -> Dict[str, Any]:
         log(f"config load warning: {e}")
     return cfg
 
-def ensure_export_dir(path: str) -> None:
+def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
-def cleanup_export_dir(path: str, days: int) -> None:
+def cleanup_dir(path: str, days: int) -> None:
     if not days or days <= 0:
         return
     try:
@@ -129,6 +131,39 @@ def cleanup_export_dir(path: str, days: int) -> None:
         pass
 
 # =========================
+# Export dir resolver
+# =========================
+
+def resolve_export_dir(tab: str, cfg: Dict[str, Any]) -> str:
+    """
+    Returns export directory with fallbacks:
+      1) User-configured export_dir if non-empty and exists
+      2) shared.opts.outdir_{tab}_samples (Forge/A1111) if available
+      3) shared.opts.outdir_samples if available
+      4) extensions/paint-tool/exports (final fallback)
+    """
+    # 1) user-configured directory (must exist)
+    user_dir = str(cfg.get("export_dir") or "").strip()
+    if user_dir and os.path.isdir(user_dir):
+        return user_dir
+
+    # 2) Forge/A1111 outdir for the tab, or global samples
+    try:
+        from modules import shared  # lazy import for compatibility
+        per_tab_attr = f"outdir_{tab}_samples"
+        outdir = getattr(shared.opts, per_tab_attr, None) or getattr(shared.opts, "outdir_samples", None)
+        if outdir:
+            ensure_dir(outdir)
+            return outdir
+    except Exception:
+        pass
+
+    # 3) final fallback to extension-local exports
+    fallback = os.path.join(EXT_ROOT, "exports")
+    ensure_dir(fallback)
+    return fallback
+
+# =========================
 # Export helpers
 # =========================
 
@@ -136,8 +171,14 @@ class Exporter:
     def __init__(self, cfg: Dict[str, Any]) -> None:
         self.cfg = cfg
         self.counter = 0
-        ensure_export_dir(self.cfg["export_dir"])
-        cleanup_export_dir(self.cfg["export_dir"], int(self.cfg.get("export_cleanup_days", 0)))
+        self._cleaned_dirs: Set[str] = set()
+
+    def _maybe_prepare_dir(self, path: str) -> None:
+        ensure_dir(path)
+        days = int(self.cfg.get("export_cleanup_days", 0))
+        if days > 0 and path not in self._cleaned_dirs:
+            cleanup_dir(path, days)
+            self._cleaned_dirs.add(path)
 
     def next_name(self, tab: str, index: int) -> str:
         self.counter += 1
@@ -152,8 +193,12 @@ class Exporter:
         return ".jpg" if fmt == "JPG" else ".png"
 
     def export_image(self, img: Image.Image, tab: str, index: int) -> str:
+        export_dir = resolve_export_dir(tab, self.cfg)
+        self._maybe_prepare_dir(export_dir)
+
         name = self.next_name(tab, index) + self.ext()
-        dest = os.path.join(self.cfg["export_dir"], name)
+        dest = os.path.join(export_dir, name)
+
         fmt = (self.cfg.get("export_format") or "PNG").upper()
         if fmt == "JPG":
             img = img.convert("RGB")
@@ -164,8 +209,11 @@ class Exporter:
         return dest
 
     def copy_file(self, src_path: str, tab: str, index: int) -> str:
+        export_dir = resolve_export_dir(tab, self.cfg)
+        self._maybe_prepare_dir(export_dir)
+
         name = self.next_name(tab, index) + os.path.splitext(strip_query(src_path))[-1]
-        dest = os.path.join(self.cfg["export_dir"], name)
+        dest = os.path.join(export_dir, name)
         shutil.copy2(strip_query(src_path), dest)
         return dest
 
