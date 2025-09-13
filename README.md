@@ -1,6 +1,6 @@
 # PaintTool for Stable Diffusion WebUI Forge
 
-外部ペイントツールで、ギャラリーの画像（未選択なら先頭）をワンクリックで開く拡張。プログラム上の既定は Windows の「mspaint.exe」。config.json に設定があればそれを優先（例: CLIP STUDIO）。
+外部ペイントツールで、ギャラリーの画像（未選択なら先頭）をワンクリックで開く拡張。config.json に設定があればそれを優先（例: CLIP STUDIO）。
 
 ---
 
