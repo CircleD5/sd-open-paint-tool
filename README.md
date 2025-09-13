@@ -1,52 +1,33 @@
 # PaintTool for Stable Diffusion WebUI Forge
 
-外部ペイントツール（既定: CLIP STUDIO）で、ギャラリーの画像（未選択なら先頭）をワンクリックで開く拡張。
+外部ペイントツールで、ギャラリーの画像（未選択なら先頭）をワンクリックで開く拡張。プログラム上の既定は Windows の「mspaint.exe」。config.json に設定があればそれを優先（例: CLIP STUDIO）。
 
 ---
 
 ## ユーザーがやること（最短手順）
 
-1. 拡張をインストール
-   webuiの[Extensions]>[Install from URL]のURL for extension's git repositoryに以下を入力して、[Install]ボタンを押す。
-   `https://github.com/CircleD5/sd-open-paint-tool.git`
-
-3. Forge を再起動
-
-4. 画像を生成し、ギャラリー下の「🖌️ Paint」ボタンを押す  
+1. 拡張をインストール  
+   webui の [Extensions] > [Install from URL] の URL に以下を入力して [Install]  
+    `https://github.com/CircleD5/sd-open-paint-tool.git`
+2. Forge を再起動
+3. 画像を生成し、ギャラリー下の「🖌️ Paint」ボタンを押す
 
 ---
 
 ## config.json（サンプル）
-```json
 {
   "editor_path": "C:\\Program Files\\CELSYS\\CLIP STUDIO 1.5\\CLIP STUDIO PAINT\\CLIPStudioPaint.exe",
-  "export_dir": "D:\\SD\\PaintExports",
-  "always_export_copy": true,
   "export_format": "PNG",
-  "export_jpeg_quality": 95,
-  "export_naming": "{datetime}_{tab}_{index}_{counter}",
-  "export_cleanup_days": 0
+  "export_jpeg_quality": 95
 }
-```
 
 ### 必須編集ポイント
-- editor_path: 自分の環境の CLIP STUDIO（または他のペイントツール）の実行ファイルに変更する  
+- editor_path: 自分の環境の CLIP STUDIO（または他のエディタ）に変更可能  
   例: C:\\Program Files\\CELSYS\\CLIP STUDIO 2.0\\CLIP STUDIO PAINT\\CLIPStudioPaint.exe
-- export_dir: 書き出し先フォルダ（永続化したい場所）に変更する
-
-### 主なオプション
-- always_export_copy (false/true)  
-  既にパスがある画像でも毎回 `export_dir` にコピーしてから開く（元ファイルを汚したくない場合は true）
-- export_format (PNG/JPG), export_jpeg_quality: 書き出し形式と品質
-- export_naming: ファイル名テンプレ。{datetime} {tab} {index} {counter} が使用可
-- export_cleanup_days: Forge起動時に `export_dir` を日数基準で自動掃除（0 なら無効）
 
 ---
 
 ## 補足
 - 対象タブ: txt2img / img2img / extras  
-- editor_path が無効なら OS 既定アプリで開く（Windows: os.startfile, macOS: open, Linux: xdg-open）
-
-## トラブル時
-- 起動しない: editor_path の存在チェック。無効でも既定アプリで開くログが出ます
-- 書き出されない: export_dir の権限/空き容量を確認
+- 画像は各タブの出力先（outdir_txt2img_samples / outdir_img2img_samples / outdir_extras_samples 既定）へ保存されます  
+- ファイル名: YYYYMMDD_HHMMSS_index_counter_painted.<拡張子>（tab 名は含めません）  
