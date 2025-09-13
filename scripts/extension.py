@@ -1,24 +1,26 @@
 # extensions/paint-tool/scripts/extension.py
 # -------------------------------------------------------------------
 # PaintTool extension
-# - Injects a button into the same button row (image_buttons_{tab})
-# - Opens the selected image (or first if none) in an external editor
-# - If the gallery item has no path (PIL in-memory), exports to a user-
-#   configurable persistent directory (export_dir) before opening
-# - When export_dir is empty/missing, resolve to Forge/A1111 output:
-#     outdir_{tab}_samples -> outdir_samples -> defaults under data_path/outputs
-# - Editor and export settings are configurable via config.json
+# - Adds a button into the same button row (image_buttons_{tab})
+# - Saves/copies the selected (or first) image into the per-tab output:
+#     txt2img  -> shared.opts.outdir_txt2img_samples (or default)
+#     img2img  -> shared.opts.outdir_img2img_samples (or default)
+#     extras   -> shared.opts.outdir_extras_samples  (or default)
+# - File naming: <YYYYMMDD_HHMMSS>_<index>_<counter>_painted.<ext>
+#   (tab name is NOT included in the filename)
+# - If the gallery item has no path (PIL in-memory), writes it there first
+# - Editor path is read from config.json; if invalid/missing, falls back to
+#   Windows Paint (C:\Windows\System32\mspaint.exe) or OS default opener
 # -------------------------------------------------------------------
 
 from __future__ import annotations
 
 import os
-import sys
 import json
 import shutil
 import subprocess
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Set
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 import gradio as gr
 from PIL import Image
@@ -32,7 +34,9 @@ from modules.ui_components import ToolButton
 
 EXT_NAME       = "paint-tool"
 ICON_PAINT     = "🖌️"
-DEFAULT_EDITOR = r"C:\Program Files\CELSYS\CLIP STUDIO 1.5\CLIP STUDIO PAINT\CLIPStudioPaint.exe"
+
+# Program default: Windows built-in Paint
+DEFAULT_EDITOR = r"C:\Windows\System32\mspaint.exe"
 
 EXT_ROOT   = os.path.dirname(os.path.dirname(__file__))             # .../extensions/paint-tool
 CFG_PATH   = os.path.join(EXT_ROOT, "config.json")
@@ -62,15 +66,12 @@ def sanitize_filename(name: str) -> str:
 # =========================
 # Config management
 # =========================
+# NOTE: cleanup や export_dir は廃止しています
 
 _DEFAULT_CONFIG = {
-    "editor_path": DEFAULT_EDITOR,
-    "export_dir": os.path.join(EXT_ROOT, "exports"),
-    "always_export_copy": False,
+    "editor_path": r"C:\Program Files\CELSYS\CLIP STUDIO 1.5\CLIP STUDIO PAINT\CLIPStudioPaint.exe",  # sample; program default uses mspaint.exe
     "export_format": "PNG",           # "PNG" or "JPG"
-    "export_jpeg_quality": 95,        # 1-100
-    "export_naming": "{datetime}_{tab}_{index}_{counter}",
-    "export_cleanup_days": 0          # 0 = no cleanup
+    "export_jpeg_quality": 95         # 1-100
 }
 
 def load_config() -> Dict[str, Any]:
@@ -79,28 +80,19 @@ def load_config() -> Dict[str, Any]:
         if os.path.exists(CFG_PATH):
             with open(CFG_PATH, "r", encoding="utf-8") as f:
                 user = json.load(f)
-            # 型ゆらぎに耐性を持たせる
             merged: Dict[str, Any] = {}
             for k, v in _DEFAULT_CONFIG.items():
                 uv = user.get(k, v)
-                if k == "export_cleanup_days":
+                if k == "export_jpeg_quality":
                     try:
                         uv = int(uv)
                     except Exception:
                         uv = v
-                elif k == "export_jpeg_quality":
-                    try:
-                        uv = int(uv)
-                    except Exception:
-                        uv = v
-                elif k == "always_export_copy":
-                    uv = bool(uv)
                 elif k == "export_format":
                     uv = str(uv).upper() if isinstance(uv, (str, bytes)) else v
                     if uv not in ("PNG", "JPG"):
                         uv = "PNG"
                 else:
-                    # 文字列系
                     if isinstance(v, str):
                         uv = str(uv)
                 merged[k] = uv
@@ -112,64 +104,27 @@ def load_config() -> Dict[str, Any]:
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
-def cleanup_dir(path: str, days: int) -> None:
-    if not days or days <= 0:
-        return
-    try:
-        cutoff = datetime.now() - timedelta(days=days)
-        for name in os.listdir(path):
-            p = os.path.join(path, name)
-            try:
-                if os.path.isfile(p):
-                    mtime = datetime.fromtimestamp(os.path.getmtime(p))
-                    if mtime < cutoff:
-                        os.remove(p)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
 # =========================
-# Export dir resolver
+# Per-tab outdir resolver
 # =========================
 
-def resolve_export_dir(tab: str, cfg: Dict[str, Any]) -> str:
+def resolve_tab_outdir(tab: str) -> str:
     """
-    Resolve export directory in this order:
-      1) config.json: export_dir (non-empty AND exists)
-      2) Forge/A1111: shared.opts.outdir_{tab}_samples (if set/non-empty)
-      3) Forge/A1111: shared.opts.outdir_samples (if set/non-empty)
-      4) Defaults under data_path/outputs:
-           txt2img -> data_path/outputs/txt2img-images
-           img2img -> data_path/outputs/img2img-images
-           extras  -> data_path/outputs/extras-images
-      5) Final fallback: extensions/paint-tool/exports
+    Decide per-tab output directory:
+      1) shared.opts.outdir_{tab}_samples if set/non-empty
+      2) default under data_path/outputs/{txt2img-images|img2img-images|extras-images}
+      3) final fallback: extensions/paint-tool/exports
     """
-    # 1) user-configured directory (must exist)
-    user_dir = str(cfg.get("export_dir") or "").strip()
-    if user_dir and os.path.isdir(user_dir):
-        return user_dir
-
-    # 2) & 3) Forge/A1111 settings
     try:
-        from modules import shared, paths  # lazy import for compatibility
-
-        # per-tab first (if user set a value)
+        from modules import shared, paths  # lazy import
         per_tab_key = f"outdir_{tab}_samples"
-        per_tab_val = getattr(shared.opts, per_tab_key, None)
+        per_tab_val = getattr(shared.opts, per_tab_key, "")
         if isinstance(per_tab_val, str) and per_tab_val.strip():
             d = per_tab_val.strip()
             ensure_dir(d)
             return d
 
-        # global samples directory (if user set a value)
-        global_val = getattr(shared.opts, "outdir_samples", None)
-        if isinstance(global_val, str) and global_val.strip():
-            d = global_val.strip()
-            ensure_dir(d)
-            return d
-
-        # 4) defaults under data_path/outputs
+        # default locations (matching A1111/Forge options defaults)
         default_output_dir = os.path.join(paths.data_path, "outputs")
         sub_map = {
             "txt2img": "txt2img-images",
@@ -181,10 +136,10 @@ def resolve_export_dir(tab: str, cfg: Dict[str, Any]) -> str:
         ensure_dir(d)
         return d
 
-    except Exception:
-        # 5) final fallback
-        pass
+    except Exception as e:
+        log(f"resolve_tab_outdir fallback due to: {e}")
 
+    # ultimate fallback
     fallback = os.path.join(EXT_ROOT, "exports")
     ensure_dir(fallback)
     return fallback
@@ -197,33 +152,27 @@ class Exporter:
     def __init__(self, cfg: Dict[str, Any]) -> None:
         self.cfg = cfg
         self.counter = 0
-        self._cleaned_dirs: Set[str] = set()
 
-    def _maybe_prepare_dir(self, path: str) -> None:
-        ensure_dir(path)
-        days = int(self.cfg.get("export_cleanup_days", 0))
-        if days > 0 and path not in self._cleaned_dirs:
-            cleanup_dir(path, days)
-            self._cleaned_dirs.add(path)
+    def _timestamp(self) -> str:
+        return datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    def next_name(self, tab: str, index: int) -> str:
+    def next_base_name(self, index: int) -> str:
+        """
+        Filename base without tab (requested), and must include _painted.
+        Pattern: <YYYYMMDD_HHMMSS>_<index>_<counter>_painted
+        """
         self.counter += 1
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = self.cfg.get("export_naming", _DEFAULT_CONFIG["export_naming"]).format(
-            datetime=ts, tab=tab, index=index, counter=self.counter
-        )
+        base = f"{self._timestamp()}_{index}_{self.counter}_painted"
         return sanitize_filename(base)
 
-    def ext(self) -> str:
+    def ext_for_export(self) -> str:
         fmt = (self.cfg.get("export_format") or "PNG").upper()
         return ".jpg" if fmt == "JPG" else ".png"
 
     def export_image(self, img: Image.Image, tab: str, index: int) -> str:
-        export_dir = resolve_export_dir(tab, self.cfg)
-        self._maybe_prepare_dir(export_dir)
-
-        name = self.next_name(tab, index) + self.ext()
-        dest = os.path.join(export_dir, name)
+        outdir = resolve_tab_outdir(tab)
+        name = self.next_base_name(index) + self.ext_for_export()
+        dest = os.path.join(outdir, name)
 
         fmt = (self.cfg.get("export_format") or "PNG").upper()
         if fmt == "JPG":
@@ -235,11 +184,14 @@ class Exporter:
         return dest
 
     def copy_file(self, src_path: str, tab: str, index: int) -> str:
-        export_dir = resolve_export_dir(tab, self.cfg)
-        self._maybe_prepare_dir(export_dir)
-
-        name = self.next_name(tab, index) + os.path.splitext(strip_query(src_path))[-1]
-        dest = os.path.join(export_dir, name)
+        outdir = resolve_tab_outdir(tab)
+        # keep original extension, add _painted suffix
+        root, ext = os.path.splitext(strip_query(src_path))
+        if not ext:
+            # if original has no extension, fall back to export format
+            ext = self.ext_for_export()
+        name = self.next_base_name(index) + ext
+        dest = os.path.join(outdir, name)
         shutil.copy2(strip_query(src_path), dest)
         return dest
 
@@ -257,25 +209,28 @@ class PaintTool:
     # ---------- Resolve path from gallery item ----------
 
     def ensure_path_from_gallery_item(self, item: Any, tab: str, index: int) -> Optional[str]:
-        # dict {"name": "..."}
+        """
+        Save/copy into per-tab outdir and return the saved path.
+        """
+        # dict {"name": "..."} → copy to outdir with painted suffix
         if isinstance(item, dict):
             p = strip_query(item.get("name") or "")
             if p and os.path.exists(p):
-                return self.exporter.copy_file(p, tab, index) if self.cfg.get("always_export_copy") else p
+                return self.exporter.copy_file(p, tab, index)
 
-        # 文字列
+        # string path → copy to outdir with painted suffix
         if isinstance(item, str):
             p = strip_query(item)
             if os.path.exists(p):
-                return self.exporter.copy_file(p, tab, index) if self.cfg.get("always_export_copy") else p
+                return self.exporter.copy_file(p, tab, index)
 
-        # (PIL.Image, ...)
+        # (PIL.Image, ...) → export to outdir
         if isinstance(item, (tuple, list)) and item:
             maybe_img = item[0]
             if isinstance(maybe_img, Image.Image):
                 return self.exporter.export_image(maybe_img, tab, index)
 
-        # PIL.Image
+        # PIL.Image → export to outdir
         if isinstance(item, Image.Image):
             return self.exporter.export_image(item, tab, index)
 
@@ -285,17 +240,14 @@ class PaintTool:
 
     def open_in_editor(self, images: Any, index: Optional[Any], tab: Optional[str] = None) -> None:
         try:
-            # images が配列でないケースにも防御
-            if not isinstance(images, (list, tuple)):
-                log("未実行: ギャラリーに画像がありません（images が配列ではありません）")
-                return
-            if len(images) == 0:
+            # Validate images
+            if not isinstance(images, (list, tuple)) or len(images) == 0:
                 log("未実行: ギャラリーに画像がありません")
                 return
 
-            # index を安全に int 化
+            # Normalize index
             try:
-                idx = int(index)  # ここで '3' のような文字列を数値化
+                idx = int(index)
             except Exception:
                 idx = 0
             if idx < 0 or idx >= len(images):
@@ -318,13 +270,19 @@ class PaintTool:
                     log(f"Launch editor: {editor} {path}")
                     subprocess.Popen([editor, path])
                 else:
+                    # editor invalid → OS default opener
                     log(f"editor_path 無効/未設定。既定アプリで開きます: {path}")
                     if os.name == "nt":
                         os.startfile(path)  # type: ignore[attr-defined]
-                    elif sys.platform == "darwin":
-                        subprocess.Popen(["open", path])
+                    elif os.name == "posix":
+                        # macOS / Linux
+                        try:
+                            subprocess.Popen(["open", path])  # macOS
+                        except Exception:
+                            subprocess.Popen(["xdg-open", path])  # Linux
                     else:
-                        subprocess.Popen(["xdg-open", path])
+                        # last resort
+                        subprocess.Popen([path])
             except Exception as e:
                 log(f"外部起動エラー: {e}")
 
@@ -347,13 +305,12 @@ class PaintTool:
             btn = ToolButton(
                 ICON_PAINT,
                 elem_id=f"{ROW_ID_PREFIX}{tab}_paint_tool",
-                tooltip="Open image in external editor (PaintTool)",
+                tooltip="Save to per-tab outdir (_painted) and open in external editor",
             )
             btn.click(
                 fn=self.open_in_editor,
                 _js="""
                 (images, tabName) => {
-                    // index は数値だが、送受信時に文字列化される場合があるため
                     const getIdx = () => (typeof selected_gallery_index === "function") ? selected_gallery_index() : null;
                     const i   = getIdx();
                     const len = Array.isArray(images) ? images.length : 0;
@@ -369,7 +326,7 @@ class PaintTool:
     def on_after_component(self, component: Any, **kwargs) -> None:
         elem_id = (kwargs.get("elem_id") or "").strip()
 
-        # 1) ギャラリー捕捉
+        # 1) capture galleries
         if elem_id.endswith(GALLERY_ID_SUFFIX):
             tab = elem_id[:-len(GALLERY_ID_SUFFIX)]
             if tab:
@@ -378,7 +335,7 @@ class PaintTool:
                 if pending_row is not None:
                     self.inject_button_into_row(tab, pending_row)
 
-        # 2) ボタン行（Row）に注入
+        # 2) inject into button rows
         if elem_id.startswith(ROW_ID_PREFIX):
             tab = elem_id[len(ROW_ID_PREFIX):]
             self.inject_button_into_row(tab, component)
