@@ -5,8 +5,8 @@
 # - Opens the selected image (or first if none) in an external editor
 # - If the gallery item has no path (PIL in-memory), exports to a user-
 #   configurable persistent directory (export_dir) before opening
-# - When export_dir is empty or missing, falls back to Forge/A1111 output
-#   directory (outdir_{tab}_samples or outdir_samples)
+# - When export_dir is empty/missing, resolve to Forge/A1111 output:
+#     outdir_{tab}_samples -> outdir_samples -> defaults under data_path/outputs
 # - Editor and export settings are configurable via config.json
 # -------------------------------------------------------------------
 
@@ -16,7 +16,6 @@ import os
 import sys
 import json
 import shutil
-import tempfile
 import subprocess
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Set
@@ -136,29 +135,56 @@ def cleanup_dir(path: str, days: int) -> None:
 
 def resolve_export_dir(tab: str, cfg: Dict[str, Any]) -> str:
     """
-    Returns export directory with fallbacks:
-      1) User-configured export_dir if non-empty and exists
-      2) shared.opts.outdir_{tab}_samples (Forge/A1111) if available
-      3) shared.opts.outdir_samples if available
-      4) extensions/paint-tool/exports (final fallback)
+    Resolve export directory in this order:
+      1) config.json: export_dir (non-empty AND exists)
+      2) Forge/A1111: shared.opts.outdir_{tab}_samples (if set/non-empty)
+      3) Forge/A1111: shared.opts.outdir_samples (if set/non-empty)
+      4) Defaults under data_path/outputs:
+           txt2img -> data_path/outputs/txt2img-images
+           img2img -> data_path/outputs/img2img-images
+           extras  -> data_path/outputs/extras-images
+      5) Final fallback: extensions/paint-tool/exports
     """
     # 1) user-configured directory (must exist)
     user_dir = str(cfg.get("export_dir") or "").strip()
     if user_dir and os.path.isdir(user_dir):
         return user_dir
 
-    # 2) Forge/A1111 outdir for the tab, or global samples
+    # 2) & 3) Forge/A1111 settings
     try:
-        from modules import shared  # lazy import for compatibility
-        per_tab_attr = f"outdir_{tab}_samples"
-        outdir = getattr(shared.opts, per_tab_attr, None) or getattr(shared.opts, "outdir_samples", None)
-        if outdir:
-            ensure_dir(outdir)
-            return outdir
+        from modules import shared, paths  # lazy import for compatibility
+
+        # per-tab first (if user set a value)
+        per_tab_key = f"outdir_{tab}_samples"
+        per_tab_val = getattr(shared.opts, per_tab_key, None)
+        if isinstance(per_tab_val, str) and per_tab_val.strip():
+            d = per_tab_val.strip()
+            ensure_dir(d)
+            return d
+
+        # global samples directory (if user set a value)
+        global_val = getattr(shared.opts, "outdir_samples", None)
+        if isinstance(global_val, str) and global_val.strip():
+            d = global_val.strip()
+            ensure_dir(d)
+            return d
+
+        # 4) defaults under data_path/outputs
+        default_output_dir = os.path.join(paths.data_path, "outputs")
+        sub_map = {
+            "txt2img": "txt2img-images",
+            "img2img": "img2img-images",
+            "extras":  "extras-images",
+        }
+        sub = sub_map.get(tab, "txt2img-images")
+        d = os.path.join(default_output_dir, sub)
+        ensure_dir(d)
+        return d
+
     except Exception:
+        # 5) final fallback
         pass
 
-    # 3) final fallback to extension-local exports
     fallback = os.path.join(EXT_ROOT, "exports")
     ensure_dir(fallback)
     return fallback
