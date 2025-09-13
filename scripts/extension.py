@@ -36,7 +36,7 @@ EXT_NAME       = "paint-tool"
 ICON_PAINT     = "🖌️"
 
 # Program default: Windows built-in Paint
-DEFAULT_EDITOR = r"C:\Windows\System32\mspaint.exe"
+DEFAULT_EDITOR = r"mspaint"
 
 EXT_ROOT   = os.path.dirname(os.path.dirname(__file__))             # .../extensions/paint-tool
 CFG_PATH   = os.path.join(EXT_ROOT, "config.json")
